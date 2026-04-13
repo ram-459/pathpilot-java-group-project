@@ -201,6 +201,59 @@ CREATE TABLE IF NOT EXISTS admin_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
+-- 12. STUDY SESSIONS TABLE (Track learning activity sessions)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS study_sessions (
+    session_id INT PRIMARY KEY AUTO_INCREMENT,
+    enrollment_id INT NOT NULL,
+    user_id INT NOT NULL,
+    phase_id INT NOT NULL,
+    session_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    session_end TIMESTAMP NULL,
+    duration_minutes INT DEFAULT 0,
+    content_studied VARCHAR(255),
+    is_completed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ss_user_id (user_id),
+    INDEX idx_ss_enrollment_id (enrollment_id),
+    INDEX idx_ss_phase_id (phase_id),
+    INDEX idx_ss_session_start (session_start),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (enrollment_id) REFERENCES enrollments(enrollment_id) ON DELETE CASCADE,
+    FOREIGN KEY (phase_id) REFERENCES phases(phase_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 13. USER STREAKS TABLE (Track daily learning streaks)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_streaks (
+    user_id INT PRIMARY KEY,
+    current_streak INT DEFAULT 0,
+    longest_streak INT DEFAULT 0,
+    last_activity_date DATE,
+    streak_started_date DATE,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 14. USER ACTIVITY LOG TABLE (Daily activity aggregates)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_activity_log (
+    activity_id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    activity_date DATE NOT NULL,
+    session_count INT DEFAULT 0,
+    total_learning_minutes INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_user_activity_date (user_id, activity_date),
+    INDEX idx_ual_user_id (user_id),
+    INDEX idx_ual_activity_date (activity_date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
 -- INDEXES FOR PERFORMANCE OPTIMIZATION
 -- ============================================================
 CREATE INDEX idx_enrollment_path ON enrollments(path_id);

@@ -183,6 +183,23 @@
                     <p class="card-desc text-gray-500 text-sm mb-6 leading-relaxed font-medium flex-grow">
                         ${path.description}
                     </p>
+                    <c:if test="${not empty pathInfo.phases}">
+                        <div class="mb-6">
+                            <p class="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-2">Phases</p>
+                            <ul class="space-y-1.5">
+                                <c:forEach var="phase" items="${pathInfo.phases}" end="2">
+                                    <li class="text-sm text-gray-600 font-medium">
+                                        Phase ${phase.phaseNumber}: ${phase.title}
+                                    </li>
+                                </c:forEach>
+                                <c:if test="${fn:length(pathInfo.phases) > 3}">
+                                    <li class="text-xs text-gray-400 font-semibold">
+                                        +${fn:length(pathInfo.phases) - 3} more phases
+                                    </li>
+                                </c:if>
+                            </ul>
+                        </div>
+                    </c:if>
                     <div class="flex gap-2 mb-8 flex-wrap">
                         <c:if test="${not empty path.category}">
                             <span class="px-3 py-1 bg-${bgColor}-50 text-${bgColor}-600 rounded-full text-[10px] font-black uppercase tracking-widest">

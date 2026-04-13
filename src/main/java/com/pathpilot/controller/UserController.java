@@ -2,16 +2,22 @@ package com.pathpilot.controller;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,18 +25,25 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import jakarta.servlet.http.HttpSession;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import com.pathpilot.dao.UserDAO;
 import com.pathpilot.dao.PathDAO;
 import com.pathpilot.dao.PhaseDAO;
+import com.pathpilot.dao.EnrollmentDAO;
+import com.pathpilot.dao.PhaseProgressDAO;
 import com.pathpilot.dao.PhaseResourceDAO;
 import com.pathpilot.dao.QuizQuestionDAO;
 import com.pathpilot.dao.QuizOptionDAO;
+import com.pathpilot.dao.QuizResponseDAO;
+import com.pathpilot.dao.UserStatisticsDAO;
 import com.pathpilot.model.CareerPath;
+import com.pathpilot.model.Enrollment;
 import com.pathpilot.model.Phase;
+import com.pathpilot.model.PhaseProgress;
 import com.pathpilot.model.PhaseResource;
 import com.pathpilot.model.QuizQuestion;
 import com.pathpilot.model.QuizOption;
+import com.pathpilot.model.User;
 
 @Controller
 @RequestMapping("/user")
@@ -46,13 +59,25 @@ public class UserController {
     private PhaseDAO phaseDAO;
 
     @Autowired
+    private EnrollmentDAO enrollmentDAO;
+
+    @Autowired
+    private PhaseProgressDAO phaseProgressDAO;
+
+    @Autowired
     private QuizQuestionDAO quizQuestionDAO;
 
     @Autowired
     private QuizOptionDAO quizOptionDAO;
 
     @Autowired
+    private QuizResponseDAO quizResponseDAO;
+
+    @Autowired
     private PhaseResourceDAO phaseResourceDAO;
+
+    @Autowired
+    private UserStatisticsDAO userStatisticsDAO;
 
     // ==========================================
     // 🔐 CENTRALIZED SESSION + ROLE CHECK
@@ -299,7 +324,7 @@ public class UserController {
                 java.util.List<PhaseResource> resources = phaseResourceDAO.getResourcesByPhaseId(phase.getPhaseId());
                 for (PhaseResource resource : resources) {
                     if ("VIDEO".equalsIgnoreCase(resource.getResourceType()) && resource.getResourceUrl() != null) {
-                        phase.setVideoResourceUrl(resource.getResourceUrl());
+                        phase.setVideoResourceUrl(normalizeVideoEmbedUrl(resource.getResourceUrl()));
                     }
                     if (("PDF".equalsIgnoreCase(resource.getResourceType()) || "DOCUMENT".equalsIgnoreCase(resource.getResourceType()))
                             && resource.getFilePath() != null) {
@@ -705,6 +730,47 @@ public class UserController {
                 : "A";
     }
 
+    private String normalizeVideoEmbedUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.trim().isEmpty()) {
+            return "";
+        }
+
+        String url = rawUrl.trim();
+        if (url.contains("youtube.com/embed/")) {
+            return url;
+        }
+
+        String videoId = null;
+
+        Matcher watchMatcher = Pattern.compile("[?&]v=([A-Za-z0-9_-]{6,})").matcher(url);
+        if (watchMatcher.find()) {
+            videoId = watchMatcher.group(1);
+        }
+
+        if (videoId == null) {
+            Matcher shortMatcher = Pattern.compile("youtu\\.be/([A-Za-z0-9_-]{6,})").matcher(url);
+            if (shortMatcher.find()) {
+                videoId = shortMatcher.group(1);
+            }
+        }
+
+        if (videoId == null) {
+            Matcher shortsMatcher = Pattern.compile("youtube\\.com/shorts/([A-Za-z0-9_-]{6,})").matcher(url);
+            if (shortsMatcher.find()) {
+                videoId = shortsMatcher.group(1);
+            }
+        }
+
+        if (videoId == null) {
+            Matcher liveMatcher = Pattern.compile("youtube\\.com/live/([A-Za-z0-9_-]{6,})").matcher(url);
+            if (liveMatcher.find()) {
+                videoId = liveMatcher.group(1);
+            }
+        }
+
+        return videoId != null ? "https://www.youtube.com/embed/" + videoId : url;
+    }
+
     @PostMapping("/create-path/upload-phase-file")
     @ResponseBody
     public ResponseEntity<String> uploadPhaseFile(
@@ -829,17 +895,176 @@ public class UserController {
     // ==========================================
 
     @GetMapping("/career")
-    public String career(HttpSession session) {
+    public String career(Model model, HttpSession session) {
         String r = checkAccess(session);
         if (r != null) return r;
+
+        Integer userId = (Integer) session.getAttribute("userId");
+
+        List<CareerPath> careerPaths = pathDAO.getAllPaths();
+        List<Map<String, Object>> pathsWithStatus = new ArrayList<>();
+
+        if (careerPaths != null) {
+            for (CareerPath path : careerPaths) {
+                if (!"PUBLISHED".equalsIgnoreCase(path.getStatus())) {
+                    continue;
+                }
+
+                Map<String, Object> pathInfo = new HashMap<>();
+                pathInfo.put("path", path);
+
+                List<Phase> phases = phaseDAO.getPhasesByPathId(path.getPathId());
+                pathInfo.put("phases", phases != null ? phases : new ArrayList<>());
+
+                boolean isCreator = userId != null && path.getCreatedBy() == userId;
+                pathInfo.put("isCreator", isCreator);
+
+                if (isCreator) {
+                    pathInfo.put("isEnrolled", true);
+                    pathInfo.put("canCertify", false);
+                    pathInfo.put("enrollmentStatus", "Creator Access");
+                } else {
+                    boolean isEnrolled = userId != null && enrollmentDAO.isEnrolled(userId, path.getPathId());
+                    pathInfo.put("isEnrolled", isEnrolled);
+                    pathInfo.put("enrollmentStatus", isEnrolled ? "Already Enrolled" : "Enroll Now");
+
+                    if (isEnrolled) {
+                        boolean completedAllPhases = quizResponseDAO.hasCompletedAllPhasesInPath(userId, path.getPathId());
+                        BigDecimal avgScore = quizResponseDAO.getAverageScoreForCareerPath(userId, path.getPathId());
+                        boolean canCertify = completedAllPhases && avgScore.compareTo(new BigDecimal("60")) >= 0;
+                        pathInfo.put("canCertify", canCertify);
+                        pathInfo.put("avgScore", avgScore);
+                    } else {
+                        pathInfo.put("canCertify", false);
+                    }
+                }
+
+                pathsWithStatus.add(pathInfo);
+            }
+        }
+
+        model.addAttribute("careerPaths", pathsWithStatus);
         return "user/user_career_path";
     }
 
     @GetMapping("/enroll")
-    public String enrollPage(@RequestParam(value = "id", required = false) String id, HttpSession session) {
+    public String enrollPage(@RequestParam(value = "id", required = false) Integer pathId,
+                             Model model,
+                             HttpSession session) {
         String r = checkAccess(session);
         if (r != null) return r;
+
+        if (pathId == null) {
+            return "redirect:/user/career";
+        }
+
+        try {
+            CareerPath careerPath = pathDAO.getPathById(pathId);
+            if (careerPath == null || !"PUBLISHED".equalsIgnoreCase(careerPath.getStatus())) {
+                return "redirect:/user/career";
+            }
+
+            List<Phase> phases = phaseDAO.getPhasesByPathId(pathId);
+            model.addAttribute("careerPath", careerPath);
+            model.addAttribute("phases", phases != null ? phases : new ArrayList<>());
+        } catch (Exception e) {
+            System.err.println("Error loading enroll page data: " + e.getMessage());
+            e.printStackTrace();
+            return "redirect:/user/career";
+        }
+
         return "user/user_enroll";
+    }
+
+    @PostMapping("/enroll")
+    public String submitEnrollment(@RequestParam("pathId") int pathId,
+                                   @RequestParam(value = "phone", required = false) String phone,
+                                   HttpSession session) {
+        String r = checkAccess(session);
+        if (r != null) return r;
+
+        try {
+            int userId = (Integer) session.getAttribute("userId");
+
+            CareerPath path = pathDAO.getPathById(pathId);
+            if (path == null || !"PUBLISHED".equalsIgnoreCase(path.getStatus())) {
+                return "redirect:/user/career?error=path_not_found";
+            }
+
+            User currentUser = userDAO.getUserById(userId);
+            String submittedPhone = phone != null ? phone.trim() : "";
+            if (currentUser != null && !submittedPhone.isEmpty()) {
+                String existingPhone = currentUser.getPhone() != null ? currentUser.getPhone().trim() : "";
+                if (!submittedPhone.equals(existingPhone)) {
+                    userDAO.updatePhone(userId, submittedPhone);
+                }
+            }
+
+            if (enrollmentDAO.isEnrolled(userId, pathId)) {
+                return "redirect:/user/view-path?id=" + pathId;
+            }
+
+            Enrollment enrollment = new Enrollment();
+            enrollment.setPathId(pathId);
+            enrollment.setUserId(userId);
+            enrollment.setActive(true);
+            enrollment.setCompleted(false);
+            enrollment.setProgressPercentage(BigDecimal.ZERO);
+
+            int enrollmentId = enrollmentDAO.addEnrollment(enrollment);
+            if (enrollmentId > 0) {
+                List<Phase> phases = phaseDAO.getPhasesByPathId(pathId);
+                for (Phase phase : phases) {
+                    PhaseProgress progress = new PhaseProgress();
+                    progress.setEnrollmentId(enrollmentId);
+                    progress.setPhaseId(phase.getPhaseId());
+                    progress.setCompleted(false);
+                    progress.setAttempts(0);
+                    progress.setBestScore(BigDecimal.ZERO);
+                    phaseProgressDAO.addPhaseProgress(progress);
+                }
+                return "redirect:/user/view-path?id=" + pathId;
+            }
+
+            return "redirect:/user/enroll?id=" + pathId + "&error=enrollment_failed";
+        } catch (Exception e) {
+            System.err.println("❌ Error processing user enrollment: " + e.getMessage());
+            e.printStackTrace();
+            return "redirect:/user/enroll?id=" + pathId + "&error=enrollment_error";
+        }
+    }
+
+    @GetMapping("/view-path")
+    public String viewPath(@RequestParam("id") int pathId,
+                           HttpSession session,
+                           RedirectAttributes redirectAttributes) {
+        String r = checkAccess(session);
+        if (r != null) return r;
+
+        Integer userId = (Integer) session.getAttribute("userId");
+        CareerPath path = pathDAO.getPathById(pathId);
+
+        if (path == null || !"PUBLISHED".equalsIgnoreCase(path.getStatus())) {
+            redirectAttributes.addFlashAttribute("error", "Path not found");
+            return "redirect:/user/career";
+        }
+
+        if (userId != null && path.getCreatedBy() == userId) {
+            return "redirect:/user/edit-path?id=" + pathId;
+        }
+
+        boolean isEnrolled = userId != null && enrollmentDAO.isEnrolled(userId, pathId);
+        if (isEnrolled && userId != null) {
+            List<Map<String, Object>> enrollments = enrollmentDAO.getAllEnrollmentDetailsForUser(userId);
+            for (Map<String, Object> enrollment : enrollments) {
+                if (((Number) enrollment.get("path_id")).intValue() == pathId) {
+                    int enrollmentId = ((Number) enrollment.get("enrollment_id")).intValue();
+                    return "redirect:/user/progress?enrollmentId=" + enrollmentId;
+                }
+            }
+        }
+
+        return "redirect:/user/enroll?id=" + pathId;
     }
 
     @GetMapping("/course_detail")
@@ -851,28 +1076,138 @@ public class UserController {
 
     @GetMapping("/module")
     public String moduleContent(
-            @RequestParam("phase") String phase,
-            @RequestParam("title") String title,
+            @RequestParam(value = "phaseId", required = false) Integer phaseId,
+            @RequestParam(value = "phase", required = false) String phase,
+            @RequestParam(value = "title", required = false) String title,
+            Model model,
             HttpSession session) {
         String r = checkAccess(session);
         if (r != null) return r;
+
+        if (phaseId == null && phase != null) {
+            try {
+                phaseId = Integer.parseInt(phase.trim());
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (phaseId == null || phaseId <= 0) {
+            return "redirect:/user/progress?error=phase_not_found";
+        }
+
+        int userId = (Integer) session.getAttribute("userId");
+        Phase phaseObj = phaseDAO.getPhaseById(phaseId);
+        if (phaseObj == null) {
+            return "redirect:/user/progress?error=phase_not_found";
+        }
+
+        Enrollment enrollment = enrollmentDAO.getEnrollmentByUserAndPath(userId, phaseObj.getPathId());
+        if (enrollment == null) {
+            return "redirect:/user/enroll?id=" + phaseObj.getPathId();
+        }
+
+        String resolvedTitle = (title != null && !title.trim().isEmpty()) ? title : phaseObj.getTitle();
+        String videoUrl = "";
+        String pdfPath = "";
+        String pdfName = "";
+
+        List<PhaseResource> resources = phaseResourceDAO.getResourcesByPhaseId(phaseId);
+        for (PhaseResource resource : resources) {
+            if (videoUrl.isEmpty() && "VIDEO".equalsIgnoreCase(resource.getResourceType()) && resource.getResourceUrl() != null) {
+                videoUrl = normalizeVideoEmbedUrl(resource.getResourceUrl());
+            }
+            if (pdfPath.isEmpty() && ("PDF".equalsIgnoreCase(resource.getResourceType()) || "DOCUMENT".equalsIgnoreCase(resource.getResourceType()))
+                    && resource.getFilePath() != null) {
+                pdfPath = resource.getFilePath();
+                pdfName = resource.getResourceName() != null ? resource.getResourceName() : "Study Material";
+            }
+        }
+
+        model.addAttribute("phaseObj", phaseObj);
+        model.addAttribute("title", resolvedTitle);
+        model.addAttribute("videoUrl", videoUrl);
+        model.addAttribute("pdfPath", pdfPath);
+        model.addAttribute("pdfName", pdfName);
         return "user/user_module";
     }
 
     @GetMapping("/quiz")
     public String showQuiz(
-            @RequestParam("phase") String phase, 
-            @RequestParam("title") String title, 
+            @RequestParam(value = "phaseId", required = false) Integer phaseId,
+            @RequestParam(value = "phase", required = false) String phase,
             HttpSession session) {
         String r = checkAccess(session);
         if (r != null) return r;
-        return "user/user_quiz";
+
+        if (phaseId == null && phase != null) {
+            try {
+                phaseId = Integer.parseInt(phase.trim());
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (phaseId == null || phaseId <= 0) {
+            return "redirect:/user/progress?error=phase_not_found";
+        }
+
+        return "redirect:/student/quiz/" + phaseId;
     }
 
     @GetMapping("/progress")
-    public String progress(HttpSession session) {
+    public String progress(@RequestParam(value = "enrollmentId", required = false) Integer enrollmentId,
+                           Model model,
+                           HttpSession session) {
         String r = checkAccess(session);
         if (r != null) return r;
+
+        try {
+            int userId = (Integer) session.getAttribute("userId");
+
+            if (enrollmentId == null) {
+                List<Enrollment> enrollments = enrollmentDAO.getEnrollmentsByUserId(userId);
+                if (enrollments == null || enrollments.isEmpty()) {
+                    model.addAttribute("careerPath", new CareerPath());
+                    model.addAttribute("phasesList", new ArrayList<>());
+                    model.addAttribute("phaseProgressList", new ArrayList<>());
+                    model.addAttribute("userStats", new HashMap<String, Object>());
+                    return "user/user_progress";
+                }
+                enrollmentId = enrollments.get(0).getEnrollmentId();
+            }
+
+            Enrollment enrollment = enrollmentDAO.getEnrollmentById(enrollmentId);
+            if (enrollment == null || enrollment.getUserId() != userId) {
+                return "redirect:/user/career";
+            }
+
+            CareerPath careerPath = pathDAO.getPathById(enrollment.getPathId());
+            List<Map<String, Object>> rawPhaseRows = phaseProgressDAO.getPhaseProgressByPathId(enrollment.getPathId(), enrollmentId);
+            List<Map<String, Object>> phasesList = new ArrayList<>();
+
+            for (Map<String, Object> row : rawPhaseRows) {
+                Map<String, Object> normalized = new HashMap<>(row);
+                normalized.put("phaseId", row.get("phase_id"));
+                normalized.put("title", row.get("phase_title"));
+                normalized.put("content", row.get("phase_content"));
+                phasesList.add(normalized);
+            }
+
+            Map<String, Object> userStats = userStatisticsDAO.getUserStatistics(userId, enrollmentId);
+
+            model.addAttribute("careerPath", careerPath != null ? careerPath : new CareerPath());
+            model.addAttribute("phasesList", phasesList);
+            model.addAttribute("phaseProgressList", phasesList);
+            model.addAttribute("userStats", userStats != null ? userStats : new HashMap<String, Object>());
+            model.addAttribute("enrollmentId", enrollmentId);
+        } catch (Exception e) {
+            System.err.println("Error loading user progress: " + e.getMessage());
+            e.printStackTrace();
+            model.addAttribute("careerPath", new CareerPath());
+            model.addAttribute("phasesList", new ArrayList<>());
+            model.addAttribute("phaseProgressList", new ArrayList<>());
+            model.addAttribute("userStats", new HashMap<String, Object>());
+        }
+
         return "user/user_progress";
     }
 

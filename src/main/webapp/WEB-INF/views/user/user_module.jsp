@@ -1,5 +1,6 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 <%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %>
+<%@ page import="com.pathpilot.model.Phase" %>
 
 <%
     response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -11,54 +12,39 @@
         return;
     }
 
-    String phase = request.getParameter("phase");
-    String title = request.getParameter("title");
-    if(phase == null) phase = "Phase 1";
-    if(title == null) title = "Career Roadmap";
+    Phase phaseObj = (Phase) request.getAttribute("phaseObj");
+    String title = (String) request.getAttribute("title");
+    if (title == null || title.trim().isEmpty()) title = "Career Roadmap";
 
-    // Content logic
-    String sectionTitle = "";
-    String sectionDesc = "";
-    String pdfName = "";
-    String videoUrl = "";
-
-    // Navigation logic
-    String leftBtnLabel = "Previous";
-    String leftBtnUrl = "";
-
-    if ("Phase 1".equals(phase) || "Phase1".equals(phase)) {
-        sectionTitle = "1.1 Setting up the Environment";
-        sectionDesc = "Install your IDE and set up the local development server.";
-        pdfName = "Environment_Setup.pdf";
-        videoUrl = "https://www.youtube.com/embed/zJSY8tJY_7s";
-        leftBtnLabel = "Back to Roadmap";
-        leftBtnUrl = request.getContextPath() + "/user/progress?title=" + title;
-    } else if ("Phase 2".equals(phase) || "Phase2".equals(phase)) {
-        sectionTitle = "2.1 JavaScript Fundamentals";
-        sectionDesc = "Master ES6, Variables, and DOM manipulation.";
-        pdfName = "JS_Basics.pdf";
-        videoUrl = "https://www.youtube.com/embed/PkZNo7MFNFg";
-        leftBtnUrl = request.getContextPath() + "/user/module?phase=Phase 1&title=" + title;
-    } else if ("Phase 3".equals(phase) || "Phase3".equals(phase)) {
-        sectionTitle = "3.1 React & Frameworks";
-        sectionDesc = "Introduction to Component-based architecture.";
-        pdfName = "React_Guide.pdf";
-        videoUrl = "https://www.youtube.com/embed/w7ejDZ8SWv8";
-        leftBtnUrl = request.getContextPath() + "/user/module?phase=Phase 2&title=" + title;
-    } else if ("Phase 4".equals(phase) || "Phase4".equals(phase)) {
-        sectionTitle = "4.1 Final Capstone Project";
-        sectionDesc = "Build and deploy your first full-stack application.";
-        pdfName = "Final_Project_Specs.pdf";
-        videoUrl = "https://www.youtube.com/embed/p1QU3kLFPdg";
-        leftBtnUrl = request.getContextPath() + "/user/module?phase=Phase 3&title=" + title;
+    String phaseIdParam = request.getParameter("phaseId");
+    if (phaseIdParam == null && phaseObj != null) {
+        phaseIdParam = String.valueOf(phaseObj.getPhaseId());
     }
+    if (phaseIdParam == null) phaseIdParam = "0";
+
+    String phaseLabel = (phaseObj != null) ? ("Phase " + phaseObj.getPhaseNumber()) : "Phase";
+    String sectionTitle = (phaseObj != null && phaseObj.getTitle() != null) ? phaseObj.getTitle() : "Learning Module";
+    String sectionDesc = (phaseObj != null && phaseObj.getContent() != null) ? phaseObj.getContent() : "Study this phase content and complete the assessment.";
+
+    String pdfName = (String) request.getAttribute("pdfName");
+    String pdfPath = (String) request.getAttribute("pdfPath");
+    String videoUrl = (String) request.getAttribute("videoUrl");
+    if (pdfName == null || pdfName.trim().isEmpty()) pdfName = "Study Material";
+    if (pdfPath == null) pdfPath = "";
+    if (videoUrl == null || videoUrl.trim().isEmpty()) videoUrl = "https://www.youtube.com/embed/dQw4w9WgXcQ";
+        String videoOpenUrl = videoUrl.contains("youtube.com/embed/")
+            ? videoUrl.replace("youtube.com/embed/", "youtube.com/watch?v=")
+            : videoUrl;
+
+    String leftBtnLabel = "Back to Progress";
+    String leftBtnUrl = request.getContextPath() + "/user/progress";
 %>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Module - <%=phase%></title>
+    <title>Module - <%=phaseLabel%></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
@@ -76,11 +62,11 @@
 
     <div class="mb-8">
         <nav class="flex text-sm text-gray-500 mb-2 gap-2">
-            <a href="<%=request.getContextPath()%>/user/progress?title=<%=title%>" class="hover:text-indigo-600 font-medium">Roadmap</a>
+            <a href="<%=request.getContextPath()%>/user/progress" class="hover:text-indigo-600 font-medium">Roadmap</a>
             <span>/</span>
-            <span class="text-gray-900 font-medium"><%=phase%></span>
+            <span class="text-gray-900 font-medium"><%=phaseLabel%></span>
         </nav>
-        <h1 class="text-3xl font-bold text-gray-900 tracking-tight"><%=phase%>: <%=title%></h1>
+        <h1 class="text-3xl font-bold text-gray-900 tracking-tight"><%=phaseLabel%>: <%=title%></h1>
     </div>
 
     <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden mb-8">
@@ -90,11 +76,11 @@
             <p class="text-gray-600 font-medium"><%=sectionDesc%></p>
         </div>
 
-        <div id="pdfSection" onclick="markInteraction('pdf')" class="interaction-card bg-gray-100 p-8 flex justify-center border-2 border-transparent border-dashed m-4 rounded-xl hover:bg-gray-200/50 transition-all">
+        <div id="pdfSection" data-pdf-url="<%=request.getContextPath()%><%=pdfPath%>" onclick="markInteraction('pdf')" class="interaction-card bg-gray-100 p-8 flex justify-center border-2 border-transparent border-dashed m-4 rounded-xl hover:bg-gray-200/50 transition-all">
             <div class="w-full max-w-2xl aspect-[3/4] bg-white shadow-lg rounded-lg flex flex-col items-center justify-center border group">
                 <i class="fas fa-file-pdf text-red-500 text-6xl mb-4 group-hover:scale-110 transition-transform"></i>
                 <h4 class="font-bold text-gray-800 tracking-tight"><%=pdfName%></h4>
-                <p id="pdfStatus" class="text-xs text-gray-400 mt-2 font-semibold uppercase tracking-wider">Click to Open Material</p>
+                <p id="pdfStatus" class="text-xs text-gray-400 mt-2 font-semibold uppercase tracking-wider"><%=pdfPath.isEmpty() ? "No PDF Uploaded" : "Click to Open Material"%></p>
             </div>
         </div>
 
@@ -103,6 +89,11 @@
                 <iframe id="courseVideo" class="w-full h-full" src="<%=videoUrl%>" frameborder="0" allowfullscreen></iframe>
             </div>
             <p id="videoStatus" class="text-center text-xs text-gray-400 mt-4 font-semibold uppercase tracking-wider">Interact with Video to Proceed</p>
+            <div class="text-center mt-3">
+                <a href="<%=videoOpenUrl%>" target="_blank" rel="noopener noreferrer" class="text-xs font-bold text-indigo-600 hover:underline uppercase tracking-widest">
+                    Video not loading? Open in new tab
+                </a>
+            </div>
         </div>
 
         <div id="quizUnlockSection" class="hidden p-10 border-t border-gray-100 bg-indigo-50/20 text-center">
@@ -113,7 +104,7 @@
                 <h3 class="text-xl font-bold text-gray-800 mb-2">Ready for Assessment?</h3>
                 <p class="text-sm text-gray-500 mb-8">You've completed the learning materials. Take the quick quiz to unlock the next milestone.</p>
                 
-                <a href="<%=request.getContextPath()%>/user/quiz?phase=<%=phase%>&title=<%=title%>" 
+                <a href="<%=request.getContextPath()%>/user/quiz?phaseId=<%=phaseIdParam%>" 
                    class="inline-flex items-center gap-3 px-10 py-4 rounded-2xl font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition active:scale-95">
                     Start Assessment <i class="fas fa-arrow-right text-xs"></i>
                 </a>
@@ -164,9 +155,16 @@
                 confirmButtonText: 'Let\'s Go!'
             }).then((result) => {
                 if (result.isConfirmed) {
-                    window.location.href = "<%=request.getContextPath()%>/user/quiz?phase=<%=phase%>&title=<%=title%>";
+                    window.location.href = "<%=request.getContextPath()%>/user/quiz?phaseId=<%=phaseIdParam%>";
                 }
             });
+        }
+
+        if (type === 'pdf') {
+            const pdfUrl = document.getElementById('pdfSection').getAttribute('data-pdf-url');
+            if (pdfUrl && pdfUrl !== '<%=request.getContextPath()%>') {
+                window.open(pdfUrl, '_blank');
+            }
         }
     }
 </script>

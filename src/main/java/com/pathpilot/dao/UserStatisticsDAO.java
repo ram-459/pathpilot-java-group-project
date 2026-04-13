@@ -99,8 +99,7 @@ public class UserStatisticsDAO {
     public void logStudySession(int enrollmentId, int userId, int phaseId, String contentStudied, int durationMinutes) {
         String sql = "INSERT INTO study_sessions " +
                      "(enrollment_id, user_id, phase_id, session_end, duration_minutes, content_studied, is_completed) " +
-                     "VALUES (?, ?, ?, NOW(), ?, ?, TRUE) " +
-                     "ON DUPLICATE KEY UPDATE duration_minutes = duration_minutes + VALUES(duration_minutes)";
+                     "VALUES (?, ?, ?, NOW(), ?, ?, TRUE)";
 
         jdbcTemplate.update(sql, enrollmentId, userId, phaseId, durationMinutes, contentStudied);
         
@@ -120,7 +119,7 @@ public class UserStatisticsDAO {
                      "VALUES (?, DATE(NOW()), 1, 0) " +
                      "ON DUPLICATE KEY UPDATE " +
                      "session_count = session_count + 1, " +
-                     "last_activity_time = NOW()";
+                     "updated_at = CURRENT_TIMESTAMP";
 
         jdbcTemplate.update(sql, userId);
     }

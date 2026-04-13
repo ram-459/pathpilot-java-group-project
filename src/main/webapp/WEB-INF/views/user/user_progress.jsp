@@ -134,6 +134,7 @@
         
         <c:choose>
             <c:when test="${not empty phasesList}">
+                <c:set var="previousCompleted" value="true" scope="page"/>
                 <c:forEach var="phase" items="${phasesList}" varStatus="loop">
                     <%-- Match progress for this phase --%>
                     <c:set var="phaseProgress" value="${null}"/>
@@ -142,10 +143,14 @@
                             <c:set var="phaseProgress" value="${pp}"/>
                         </c:if>
                     </c:forEach>
+
+                    <c:set var="isCompletedNow" value="${phaseProgress != null && phaseProgress.is_completed}"/>
+                    <c:set var="isInProgressNow" value="${phaseProgress != null && phaseProgress.attempts > 0}"/>
+                    <c:set var="isUnlockedNow" value="${loop.first || previousCompleted}"/>
                     
                     <%-- Display Phase Card --%>
                     <c:choose>
-                        <c:when test="${phaseProgress != null && phaseProgress.is_completed}">
+                        <c:when test="${isCompletedNow}">
                             <%-- COMPLETED PHASE --%>
                             <div class="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
                                 <span class="text-[10px] text-green-600 font-black uppercase tracking-widest">
@@ -173,7 +178,7 @@
                             </div>
                         </c:when>
                         
-                        <c:when test="${phaseProgress != null && phaseProgress.attempts > 0}">
+                        <c:when test="${isUnlockedNow && isInProgressNow}">
                             <%-- IN PROGRESS PHASE --%>
                             <div class="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm ring-2 ring-primary/5">
                                 <span class="text-[10px] text-primary font-black uppercase tracking-widest">
@@ -201,6 +206,34 @@
                                 </div>
                             </div>
                         </c:when>
+
+                        <c:when test="${isUnlockedNow}">
+                            <%-- UNLOCKED BUT NOT STARTED --%>
+                            <div class="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
+                                <span class="text-[10px] text-indigo-600 font-black uppercase tracking-widest">
+                                    Phase ${phase.phase_number} • Ready to Start
+                                </span>
+                                <h3 class="text-xl text-gray-900 mt-1">${phase.title}</h3>
+                                <p class="text-sm text-gray-500 mt-1 font-medium">
+                                    ${fn:substring(phase.content, 0, 100)}...
+                                </p>
+
+                                <div class="flex items-center justify-between mt-8">
+                                    <div class="flex-1 mr-10">
+                                        <div class="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                                            <div class="bg-indigo-400 h-2 rounded-full shadow-sm" style="width: 0%"></div>
+                                        </div>
+                                        <p class="text-[10px] text-indigo-600 mt-3 font-black uppercase tracking-widest">
+                                            Not Started
+                                        </p>
+                                    </div>
+                                    <a href="${pageContext.request.contextPath}/user/module?phaseId=${phase.phaseId}" 
+                                       class="px-8 py-3 text-xs font-black text-white bg-primary rounded-xl hover:bg-primary-dark shadow-xl shadow-primary/20 transition active:scale-95 uppercase tracking-widest">
+                                        Start
+                                    </a>
+                                </div>
+                            </div>
+                        </c:when>
                         
                         <c:otherwise>
                             <%-- NOT STARTED / LOCKED PHASE --%>
@@ -215,6 +248,8 @@
                             </div>
                         </c:otherwise>
                     </c:choose>
+
+                    <c:set var="previousCompleted" value="${isCompletedNow}" scope="page"/>
                 </c:forEach>
             </c:when>
             
