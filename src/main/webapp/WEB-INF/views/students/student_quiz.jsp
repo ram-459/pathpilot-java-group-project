@@ -175,7 +175,7 @@
             
             <div class="flex items-center gap-6">
                 <div class="text-right hidden sm:block">
-                    <span id="qCountDisplay" class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Question 1 of <span id="totalQCount">0</span></span>
+                    <span id="qCountDisplay" class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Question 1 of 1</span>
                     <div class="progress-bar-container mt-1 w-32">
                         <div id="progressBar" class="bg-[#4913ec] h-full w-0 transition-all duration-700"></div>
                     </div>
@@ -256,10 +256,7 @@
                     if (totalQuestions === 0) return;
                     
                     const q = questionsData[currentIdx];
-                    
-                    const totalCount = document.getElementById('totalQCount');
-                    totalCount.innerText = totalQuestions;
-                    
+
                     document.getElementById('qCountDisplay').innerText = "Question " + (currentIdx + 1) + " of " + totalQuestions;
                     document.getElementById('qText').innerText = q.q;
                     document.getElementById('progressBar').style.width = ((currentIdx) / totalQuestions * 100) + "%";
@@ -351,21 +348,23 @@
                     const pass = !!(resultData?.passed ?? fallbackPass);
                     
                     setTimeout(() => {
+                        const resultMessage = pass ? '✓ You have passed this assessment!' : '✗ Try again to improve your score.';
+                        const resultHtml =
+                            '<div style="text-align: left; margin-top: 20px;">' +
+                            '  <p style="font-size: 18px; margin-bottom: 15px;">' +
+                            '    <strong>Score: ' + score + '/' + calculatedTotal + '</strong>' +
+                            '  </p>' +
+                            '  <p style="font-size: 16px; color: #666; margin-bottom: 15px;">' +
+                            '    Accuracy: <strong>' + percentage + '%</strong>' +
+                            '  </p>' +
+                            '  <p style="font-size: 14px; color: #888;">' +
+                            '    ' + resultMessage +
+                            '  </p>' +
+                            '</div>';
+
                         Swal.fire({
                             title: 'Assessment Complete! 🎉',
-                            html: `
-                                <div style="text-align: left; margin-top: 20px;">
-                                    <p style="font-size: 18px; margin-bottom: 15px;">
-                                        <strong>Score: ${score}/${calculatedTotal}</strong>
-                                    </p>
-                                    <p style="font-size: 16px; color: #666; margin-bottom: 15px;">
-                                        Accuracy: <strong>${percentage}%</strong>
-                                    </p>
-                                    <p style="font-size: 14px; color: #888;">
-                                        ${pass ? '✓ You have passed this assessment!' : '✗ Try again to improve your score.'}
-                                    </p>
-                                </div>
-                            `,
+                            html: resultHtml,
                             icon: pass ? 'success' : 'warning',
                             confirmButtonText: pass ? 'Continue to Progress' : 'Retake Assessment',
                             cancelButtonText: 'Back to Course',
@@ -404,7 +403,7 @@
                 }
 
                 document.addEventListener('DOMContentLoaded', function() {
-                    document.getElementById('totalQCount').innerText = totalQuestions;
+                    document.getElementById('qCountDisplay').innerText = "Question 1 of " + totalQuestions;
                     loadQuestion();
                 });
             </script>

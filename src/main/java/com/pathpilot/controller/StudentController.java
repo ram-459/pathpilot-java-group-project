@@ -15,6 +15,7 @@ import com.pathpilot.model.Enrollment;
 import com.pathpilot.model.PhaseProgress;
 import com.pathpilot.model.PhaseResource;
 import com.pathpilot.model.QuizQuestion;
+import com.pathpilot.model.QuizResponse;
 import com.pathpilot.model.User;
 import com.pathpilot.model.QuizOption;
 import com.pathpilot.service.EmailService;
@@ -918,6 +919,64 @@ public class StudentController {
                     attempts,
                     bestScore
                 );
+
+            PhaseProgress savedProgress = phaseProgressDAO.getProgressByEnrollmentAndPhase(enrollment.getEnrollmentId(), phaseId);
+            if (savedProgress != null) {
+                int progressId = savedProgress.getProgressId();
+                quizResponseDAO.deleteResponsesByPhaseProgressId(progressId);
+
+                for (QuizQuestion question : questions) {
+                    Integer selectedIndex = submittedAnswers.get(question.getQuestionId());
+                    String correctAnswer = question.getCorrectAnswer() != null ? question.getCorrectAnswer().trim().toUpperCase() : "";
+
+                    int correctIndex;
+                    switch (correctAnswer) {
+                        case "A":
+                            correctIndex = 0;
+                            break;
+                        case "B":
+                            correctIndex = 1;
+                            break;
+                        case "C":
+                            correctIndex = 2;
+                            break;
+                        case "D":
+                            correctIndex = 3;
+                            break;
+                        default:
+                            correctIndex = -1;
+                    }
+
+                    String selectedAnswer = null;
+                    if (selectedIndex != null) {
+                        switch (selectedIndex) {
+                            case 0:
+                                selectedAnswer = "A";
+                                break;
+                            case 1:
+                                selectedAnswer = "B";
+                                break;
+                            case 2:
+                                selectedAnswer = "C";
+                                break;
+                            case 3:
+                                selectedAnswer = "D";
+                                break;
+                            default:
+                                selectedAnswer = null;
+                        }
+                    }
+
+                    boolean isCorrect = selectedIndex != null && selectedIndex == correctIndex;
+
+                    QuizResponse quizResponse = new QuizResponse();
+                    quizResponse.setPhaseProgressId(progressId);
+                    quizResponse.setQuestionId(question.getQuestionId());
+                    quizResponse.setSelectedAnswer(selectedAnswer);
+                    quizResponse.setCorrect(isCorrect);
+                    quizResponseDAO.addResponse(quizResponse);
+                }
+            }
 
             BigDecimal overall = phaseProgressDAO.calculateProgressPercentage(enrollment.getEnrollmentId());
             enrollmentDAO.updateProgress(enrollment.getEnrollmentId(), overall);
