@@ -114,11 +114,12 @@ public class PhaseResourceDAO {
         }
 
         if (existingResourceId != null) {
-            String updateSql = "UPDATE phase_resources SET resource_type = ?, resource_name = ?, resource_url = NULL, " +
+            String updateSql = "UPDATE phase_resources SET resource_type = ?, resource_name = ?, resource_url = ?, " +
                     "file_path = ?, file_size = ?, mime_type = ?, uploaded_by = ? WHERE resource_id = ?";
             return jdbcTemplate.update(updateSql,
                     resourceType,
                     resourceName,
+                filePath,
                     filePath,
                     fileSize,
                     mimeType,
@@ -127,11 +128,12 @@ public class PhaseResourceDAO {
         }
 
         String insertSql = "INSERT INTO phase_resources (phase_id, resource_type, resource_name, resource_url, file_path, " +
-                "file_size, mime_type, uploaded_by) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)";
+            "file_size, mime_type, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         return jdbcTemplate.update(insertSql,
                 phaseId,
                 resourceType,
                 resourceName,
+            filePath,
                 filePath,
                 fileSize,
                 mimeType,

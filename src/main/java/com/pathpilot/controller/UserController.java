@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.Arrays;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import jakarta.servlet.http.HttpServletRequest;
@@ -590,17 +589,31 @@ public class UserController {
     }
 
     private void saveVideoResourceForPhase(int phaseId, String videoLink, int userId) {
+        // Skip if no video link provided
         if (videoLink == null || videoLink.trim().isEmpty()) {
             return;
         }
-        phaseResourceDAO.deleteResourcesByPhaseAndType(phaseId, "VIDEO");
-        PhaseResource videoResource = new PhaseResource();
-        videoResource.setPhaseId(phaseId);
-        videoResource.setResourceType("VIDEO");
-        videoResource.setResourceName("Video Resource");
-        videoResource.setResourceUrl(videoLink.trim());
-        videoResource.setUploadedBy(userId);
-        phaseResourceDAO.addResource(videoResource);
+
+        try {
+            // Delete existing video resource for this phase
+            phaseResourceDAO.deleteResourcesByPhaseAndType(phaseId, "VIDEO");
+            
+            PhaseResource videoResource = new PhaseResource();
+            videoResource.setPhaseId(phaseId);
+            videoResource.setResourceType("VIDEO");
+            videoResource.setResourceName("Video Resource");
+            videoResource.setResourceUrl(videoLink.trim());
+            videoResource.setFilePath("");  // ✅ Empty string instead of null for VIDEO resources
+            videoResource.setFileSize(0);   // ✅ No file size for video URLs
+            videoResource.setMimeType("video/youtube");  // ✅ Set MIME type
+            videoResource.setUploadedBy(userId);
+            
+            int saved = phaseResourceDAO.addResource(videoResource);
+            System.out.println("[VIDEO RESOURCE] ✅ Saved video for phase " + phaseId + " | URL: " + videoLink.trim() + " | Rows: " + saved);
+        } catch (Exception e) {
+            System.err.println("[VIDEO RESOURCE] ❌ Error saving video for phase " + phaseId + ": " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     private boolean hasPhaseScopedQuizPayload(HttpServletRequest request, int phaseNum) {
@@ -776,48 +789,74 @@ public class UserController {
     @PostMapping({"/create-path/upload-phase-file", "/edit-path/upload-phase-file"})
     @ResponseBody
     public ResponseEntity<String> uploadPhaseFile(
-            @RequestParam("pathId") int pathId,
+            @RequestParam(value = "pathId", required = false) String rawPathId,
             @RequestParam(value = "phaseNumber", required = false) Integer phaseNumber,
             @RequestParam(value = "phaseId", required = false) Integer phaseId,
             @RequestParam("attachment") MultipartFile attachment,
             HttpSession session) {
+        
+        System.out.println("[UPLOAD] File received: " + (attachment != null ? attachment.getOriginalFilename() : "NULL"));
+        
         String access = checkAccess(session);
         if (access != null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("ERROR: Unauthorized");
         }
 
         try {
+            int userId = (Integer) session.getAttribute("userId");
+            Integer pathId = tryParsePositiveInt(rawPathId);
+            
+            // 1. CHECK FILE
             if (attachment == null || attachment.isEmpty()) {
-                return ResponseEntity.badRequest().body("ERROR: No file provided");
+                return ResponseEntity.badRequest().body("File is required");
             }
-
+            
+            if (attachment.getSize() == 0) {
+                return ResponseEntity.badRequest().body("File is empty");
+            }
+            
+            if (attachment.getSize() > 50 * 1024 * 1024) {
+                return ResponseEntity.badRequest().body("File too large - max 50MB");
+            }
+            
+            // Check file type
             if (!isAllowedDocumentAttachment(attachment)) {
-                return ResponseEntity.badRequest().body("ERROR: Only PDF, DOC, DOCX files are allowed");
+                return ResponseEntity.badRequest().body("Only PDF, DOC, DOCX files allowed");
+            }
+            
+            // 2. CHECK PATH & PHASE
+            Phase phase = null;
+            if (phaseId != null && phaseId > 0) {
+                phase = phaseDAO.getPhaseById(phaseId);
+                if (phase != null && pathId == null) {
+                    pathId = phase.getPathId();
+                }
             }
 
-            final long maxSizeBytes = 50L * 1024L * 1024L;
-            if (attachment.getSize() > maxSizeBytes) {
-                return ResponseEntity.badRequest().body("ERROR: File size must be <= 50MB");
+            if (pathId == null || pathId <= 0) {
+                return ResponseEntity.badRequest().body("Invalid pathId");
             }
 
             CareerPath path = pathDAO.getPathById(pathId);
             if (path == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("ERROR: Path not found");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Path not found");
             }
-
-            int userId = (Integer) session.getAttribute("userId");
+            
             if (path.getCreatedBy() != userId) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("ERROR: Unauthorized");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Not authorized");
+            }
+            
+            if (phase != null && phase.getPathId() != pathId) {
+                phase = null;
             }
 
-            Phase phase = null;
-            if (phaseId != null && phaseId > 0) {
+            if (phase == null && phaseId != null && phaseId > 0) {
                 Phase byId = phaseDAO.getPhaseById(phaseId);
                 if (byId != null && byId.getPathId() == pathId) {
                     phase = byId;
                 }
             }
-
+            
             if (phase == null && phaseNumber != null && phaseNumber > 0) {
                 phase = phaseDAO.getPhaseByPathIdAndNumber(pathId, phaseNumber);
                 if (phase == null) {
@@ -828,62 +867,74 @@ public class UserController {
                     }
                 }
             }
-
+            
             if (phase == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("ERROR: Phase not found for upload");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Phase not found");
             }
-
-            String originalName = attachment.getOriginalFilename() != null ? attachment.getOriginalFilename() : "resource";
+            
+            // 3. SAVE FILE TO DISK
+            String originalName = attachment.getOriginalFilename();
             String safeName = originalName.replaceAll("[^a-zA-Z0-9._-]", "_");
-            int phaseMarker = phaseNumber != null && phaseNumber > 0 ? phaseNumber : phase.getPhaseNumber();
-            String fileName = "path_" + pathId + "_phase_" + phaseMarker + "_" + System.currentTimeMillis() + "_" + safeName;
-
+            String fileName = "path_" + pathId + "_phase_" + phase.getPhaseNumber() + "_" + System.currentTimeMillis() + "_" + safeName;
+            
             Path uploadRoot = resolveUploadRoot();
-            Path target = uploadRoot.resolve(fileName);
-            Files.copy(attachment.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
-            System.out.println("[UPLOAD][USER][CAREER] saved=" + target.toAbsolutePath());
-            System.out.println("[UPLOAD][USER][CAREER] exists=" + Files.exists(target) + " size=" + Files.size(target));
-
-                String mime = attachment.getContentType() != null && !attachment.getContentType().trim().isEmpty()
-                    ? attachment.getContentType()
-                    : detectMimeTypeByName(originalName);
-                String resourceType = detectResourceTypeByNameOrMime(originalName, mime);
-
-                String persistedFilePath = "/assets/uploads/" + fileName;
-                int savedRows = phaseResourceDAO.saveOrUpdateDocumentResource(
+            Path targetFile = uploadRoot.resolve(fileName);
+            
+            System.out.println("[UPLOAD] Saving to: " + targetFile.toAbsolutePath());
+            Files.copy(attachment.getInputStream(), targetFile, StandardCopyOption.REPLACE_EXISTING);
+            
+            if (!Files.exists(targetFile)) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("File save failed");
+            }
+            
+            System.out.println("[UPLOAD] File saved successfully");
+            
+            // 4. SAVE TO DATABASE
+            String filePath = "/assets/uploads/" + fileName;
+            String mimeType = attachment.getContentType();
+            
+            int savedRows = phaseResourceDAO.saveOrUpdateDocumentResource(
                     phase.getPhaseId(),
-                    resourceType,
+                    "PDF",
                     originalName,
-                    persistedFilePath,
+                    filePath,
                     attachment.getSize(),
-                    mime,
+                    mimeType,
                     userId
-                );
-
-                if (savedRows <= 0) {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("ERROR: Failed to persist uploaded file metadata");
-                }
-
-                PhaseResource persisted = phaseResourceDAO.getLatestDocumentResourceByPhaseId(phase.getPhaseId());
-                if (persisted == null || persisted.getFilePath() == null || persisted.getFilePath().trim().isEmpty()) {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("ERROR: File metadata saved incompletely (file_path missing)");
-                }
-
-                return ResponseEntity.ok("RESOURCE_SAVED|" + persisted.getFilePath() + "|" + originalName);
-        } catch (Exception e) {
+            );
+            
+            if (savedRows <= 0) {
+                System.err.println("[UPLOAD] Database insert failed");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to save file info");
+            }
+            
+            System.out.println("[UPLOAD] Database saved - " + savedRows + " rows");
+            System.out.println("[UPLOAD] File path: " + filePath);
+            
+            return ResponseEntity.ok("RESOURCE_SAVED|" + filePath + "|" + originalName);
+            
+        } catch (IOException e) {
+            System.err.println("[UPLOAD] IO Error: " + e.getMessage());
             e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("ERROR: Upload failed - " + (e.getMessage() != null ? e.getMessage() : "Unexpected error"));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("File save failed");
+        } catch (Exception e) {
+            System.err.println("[UPLOAD] Error: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Upload failed");
         }
     }
 
     private Path resolveUploadRoot() throws IOException {
-        java.util.List<Path> candidates = Arrays.asList(
-                Paths.get("D:/RGM/pathpilot/src/main/webapp/assets/uploads"),
-                Paths.get(System.getProperty("user.dir"), "src", "main", "webapp", "assets", "uploads").toAbsolutePath().normalize()
-        );
+        List<Path> candidates = new ArrayList<>();
+
+        String configuredUploadDir = System.getProperty("pathpilot.upload.dir");
+        if (configuredUploadDir != null && !configuredUploadDir.trim().isEmpty()) {
+            candidates.add(Paths.get(configuredUploadDir.trim()).toAbsolutePath().normalize());
+        }
+
+        candidates.add(Paths.get(System.getProperty("user.dir"), "src", "main", "webapp", "assets", "uploads").toAbsolutePath().normalize());
+        candidates.add(Paths.get("src", "main", "webapp", "assets", "uploads").toAbsolutePath().normalize());
+        candidates.add(Paths.get("D:/RGM/pathpilot/src/main/webapp/assets/uploads"));
 
         IOException last = null;
         for (Path candidate : candidates) {
@@ -923,6 +974,22 @@ public class UserController {
             return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         }
         return "application/octet-stream";
+    }
+
+    private Integer tryParsePositiveInt(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty() || "null".equalsIgnoreCase(trimmed)) {
+            return null;
+        }
+        try {
+            int parsed = Integer.parseInt(trimmed);
+            return parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private String detectResourceTypeByNameOrMime(String fileName, String mime) {

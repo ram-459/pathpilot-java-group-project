@@ -22,6 +22,7 @@ import com.pathpilot.model.QuizOption;
 import com.pathpilot.service.EmailService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -29,6 +30,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import org.springframework.web.multipart.MultipartFile;
 import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
@@ -121,6 +123,7 @@ public class StudentController {
                     if (path != null) {
                         Map<String, Object> pathInfo = new HashMap<>();
                         pathInfo.put("path", path);
+                        pathInfo.put("enrollmentId", enrollment.getEnrollmentId());
                         pathInfo.put("enrollmentDate", enrollment.getEnrolledDate());
                         
                         // Calculate completion percentage based on best scores
@@ -657,11 +660,18 @@ public class StudentController {
             List<Map<String, Object>> phaseProgressList = phaseProgressDAO.getPhaseProgressByPathId(careerPath.getPathId(), enrollmentId);
             Map<String, Object> userStats = userStatisticsDAO.getUserStatistics(userId, enrollmentId);
 
+            // Add certificate data
+            boolean certificateEarned = enrollment.getProgressPercentage().compareTo(BigDecimal.valueOf(60)) >= 0;
+            String certificateId = "PP-" + String.valueOf(enrollmentId).substring(Math.max(0, String.valueOf(enrollmentId).length()-6));
+
             model.addAttribute("enrollmentId", enrollmentId);
             model.addAttribute("careerPath", careerPath);
             model.addAttribute("phasesList", phasesList);
             model.addAttribute("phaseProgressList", phaseProgressList);
             model.addAttribute("userStats", userStats);
+            model.addAttribute("certificateEarned", certificateEarned);
+            model.addAttribute("certificateId", certificateId);
+            model.addAttribute("overallProgress", enrollment.getProgressPercentage());
             
         } catch (Exception e) {
             System.err.println("Error loading progress: " + e.getMessage());
@@ -1103,6 +1113,11 @@ public class StudentController {
 
             BigDecimal overall = phaseProgressDAO.calculateProgressPercentage(enrollment.getEnrollmentId());
             enrollmentDAO.updateProgress(enrollment.getEnrollmentId(), overall);
+            
+            boolean certificateEarned = false;
+            if (overall.compareTo(BigDecimal.valueOf(60)) >= 0) {
+                certificateEarned = true;
+            }
             if (overall.compareTo(BigDecimal.valueOf(100)) >= 0) {
                 enrollmentDAO.completeEnrollment(enrollment.getEnrollmentId());
             }
@@ -1118,6 +1133,8 @@ public class StudentController {
             response.put("enrollmentId", enrollment.getEnrollmentId());
             response.put("pathId", phase.getPathId());
             response.put("nextPhaseId", nextPhaseId);
+            response.put("certificateEarned", certificateEarned);
+            response.put("overall", overall);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             e.printStackTrace();
@@ -1127,6 +1144,39 @@ public class StudentController {
             errorResponse.put("exception", e.getClass().getSimpleName());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
+    }
+    
+    @GetMapping("/certificate/{enrollmentId}")
+    public String viewCertificate(
+            @PathVariable("enrollmentId") int enrollmentId,
+            HttpSession session,
+            Model model) {
+        String access = checkAccess(session);
+        if (access != null) return "redirect:/login";
+        
+        int userId = (Integer) session.getAttribute("userId");
+        Enrollment enrollment = enrollmentDAO.getEnrollmentById(enrollmentId);
+        
+        if (enrollment == null || enrollment.getUserId() != userId) {
+            return "redirect:/student/career-paths";
+        }
+        
+        // Check if user has earned certificate (60% or more progress)
+        if (enrollment.getProgressPercentage().compareTo(BigDecimal.valueOf(60)) < 0) {
+            return "redirect:/student/career-paths";
+        }
+        
+        CareerPath path = pathDAO.getPathById(enrollment.getPathId());
+        if (path == null) return "redirect:/student/career-paths";
+        
+        model.addAttribute("enrollment", enrollment);
+        model.addAttribute("path", path);
+        model.addAttribute("userName", session.getAttribute("userName"));
+        model.addAttribute("completionDate", enrollment.getCompletionDate() != null ? enrollment.getCompletionDate() : enrollment.getEnrolledDate());
+        model.addAttribute("certificateId", "PP-" + String.valueOf(enrollmentId).substring(Math.max(0, String.valueOf(enrollmentId).length()-6)));
+        model.addAttribute("enrollmentId", enrollmentId);
+        
+        return "students/student_certificate";
     }
 
     private int answerToIndex(String answer) {
@@ -1175,5 +1225,53 @@ public class StudentController {
             }
         }
         return null;
+    }
+
+    /**
+     * Serve uploaded files (images, pdfs, etc)
+     * Allows access to files stored in /assets/uploads/ directory
+     */
+    @GetMapping("/file/**")
+    public ResponseEntity<byte[]> serveFile(HttpServletRequest request) throws IOException {
+        String pathInfo = request.getRequestURI();
+        // Extract filename after /student/file/
+        String filename = pathInfo.substring(pathInfo.lastIndexOf("/") + 1);
+        
+        try {
+            Path uploadRoot = resolveUploadRoot();
+            Path filePath = uploadRoot.resolve(filename).normalize();
+            
+            // Security check: ensure the resolved path is still within the upload directory
+            if (!filePath.startsWith(uploadRoot)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            
+            if (!Files.exists(filePath)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            }
+            
+            byte[] fileContent = Files.readAllBytes(filePath);
+            String contentType = "application/octet-stream";
+            
+            // Determine content type based on file extension
+            if (filename.endsWith(".png")) {
+                contentType = "image/png";
+            } else if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) {
+                contentType = "image/jpeg";
+            } else if (filename.endsWith(".pdf")) {
+                contentType = "application/pdf";
+            } else if (filename.endsWith(".gif")) {
+                contentType = "image/gif";
+            } else if (filename.endsWith(".doc") || filename.endsWith(".docx")) {
+                contentType = "application/msword";
+            }
+            
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .body(fileContent);
+        } catch (Exception e) {
+            System.err.println("[FILE_SERVE] Error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 }

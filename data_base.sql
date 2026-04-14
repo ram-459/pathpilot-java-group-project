@@ -287,3 +287,8 @@ WHERE profile_pic IS NOT NULL
 -- ============================================================
 -- INSERT INTO users (full_name, email, password_hash, role) 
 -- VALUES ('Admin User', 'admin@pathpilot.com', SHA2('admin123', 256), 'ADMIN');
+============================
+-- SAMPLE DATA (Optional - Comment out if not needed)
+-- ============================================================
+-- INSERT INTO users (full_name, email, password_hash, role) 
+-- VALUES ('Admin User', 'admin@pathpilot.com', SHA2('admin123', 256), 'ADMIN');
