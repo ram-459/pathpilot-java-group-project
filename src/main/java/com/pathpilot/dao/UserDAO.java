@@ -263,4 +263,108 @@ public class UserDAO {
             return jdbcTemplate.update(sql, name, phone, role, isVerified, email) > 0;
         }
     }
+
+    /**
+     * 14. Get Total User Count.
+     * Returns the total number of users in the system.
+     */
+    public int getTotalUsersCount() {
+        String sql = "SELECT COUNT(*) FROM users";
+        try {
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
+            return count != null ? count : 0;
+        } catch (Exception e) {
+            System.err.println("❌ Error counting users: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * 15. Get Total Career Paths Count.
+     * Returns the total number of career paths in the system.
+     */
+    public int getTotalCareerPathsCount() {
+        String sql = "SELECT COUNT(*) FROM career_paths";
+        try {
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
+            return count != null ? count : 0;
+        } catch (Exception e) {
+            System.err.println("❌ Error counting career paths: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * 16. Get Total Enrollments Count.
+     * Returns the total number of enrollments in the system.
+     */
+    public int getTotalEnrollmentsCount() {
+        String sql = "SELECT COUNT(*) FROM enrollments";
+        try {
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class);
+            return count != null ? count : 0;
+        } catch (Exception e) {
+            System.err.println("❌ Error counting enrollments: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * 17. Get First Admin User.
+     * Fetches the first admin user (for settings page).
+     */
+    public User getFirstAdminUser() {
+        String sql = "SELECT id, name, email, password, phone, role, token, is_verified, profile_pic FROM users WHERE role = 'ADMIN' LIMIT 1";
+        try {
+            return jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+                User user = new User();
+                user.setId(rs.getInt("id"));
+                user.setName(rs.getString("name"));
+                user.setEmail(rs.getString("email"));
+                user.setPassword(rs.getString("password"));
+                user.setPhone(rs.getString("phone"));
+                user.setRole(rs.getString("role"));
+                user.setToken(rs.getString("token"));
+                user.setVerified(rs.getInt("is_verified") == 1);
+                user.setProfilePic(rs.getString("profile_pic"));
+                return user;
+            });
+        } catch (Exception e) {
+            System.err.println("❌ Error fetching admin user: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 18. Update Admin User Settings.
+     * Updates admin name, email, and phone. Password is optional.
+     */
+    public boolean updateAdminSettings(int adminId, String name, String email, String phone, String password) {
+        try {
+            if (password != null && !password.trim().isEmpty()) {
+                String sql = "UPDATE users SET name = ?, email = ?, phone = ?, password = ? WHERE id = ? AND role = 'ADMIN'";
+                return jdbcTemplate.update(sql, name, email, phone, password, adminId) > 0;
+            } else {
+                String sql = "UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ? AND role = 'ADMIN'";
+                return jdbcTemplate.update(sql, name, email, phone, adminId) > 0;
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error updating admin settings: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 19. Update Admin Profile Picture.
+     * Updates only the profile_pic field for admin.
+     */
+    public boolean updateAdminProfilePic(int adminId, String profilePicPath) {
+        try {
+            String sql = "UPDATE users SET profile_pic = ? WHERE id = ? AND role = 'ADMIN'";
+            return jdbcTemplate.update(sql, profilePicPath, adminId) > 0;
+        } catch (Exception e) {
+            System.err.println("❌ Error updating admin profile picture: " + e.getMessage());
+            return false;
+        }
+    }
 }

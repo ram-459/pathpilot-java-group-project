@@ -5,10 +5,19 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import jakarta.servlet.http.HttpSession;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.io.File;
+import java.io.IOException;
+import org.springframework.web.multipart.MultipartFile;
 import com.pathpilot.dao.UserDAO;
 import com.pathpilot.model.User;
 
@@ -60,6 +69,48 @@ public class AdminController {
         response.put("status", "ok");
         response.put("message", "Admin API is working");
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Get Dashboard Statistics
+     * Returns total counts for users, career paths, and enrollments
+     */
+    @GetMapping("/api/dashboard-stats")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getDashboardStats(HttpSession session) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            System.out.println("📊 Fetching dashboard statistics...");
+            
+            int totalUsers = userDAO.getTotalUsersCount();
+            int totalPaths = userDAO.getTotalCareerPathsCount();
+            int totalEnrollments = userDAO.getTotalEnrollmentsCount();
+            
+            System.out.println("✅ Total Users: " + totalUsers);
+            System.out.println("✅ Total Career Paths: " + totalPaths);
+            System.out.println("✅ Total Enrollments: " + totalEnrollments);
+
+            Map<String, Object> stats = new HashMap<>();
+            stats.put("totalUsers", totalUsers);
+            stats.put("totalCareerPaths", totalPaths);
+            stats.put("totalEnrollments", totalEnrollments);
+            stats.put("platformPlan", "Free");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", stats);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.err.println("❌ Error fetching dashboard stats: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
     }
 
     /**
@@ -227,6 +278,284 @@ public class AdminController {
         }
     }
 
+    /**
+     * Get Admin Settings (for profile section)
+     */
+    @GetMapping("/api/admin-settings")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getAdminSettings(HttpSession session) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            System.out.println("🔍 Fetching admin settings...");
+            
+            User admin = userDAO.getFirstAdminUser();
+            if (admin == null) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "Admin user not found");
+                return ResponseEntity.ok(response);
+            }
+            
+            System.out.println("✅ Admin settings retrieved: " + admin.getName());
+
+            Map<String, Object> adminData = new HashMap<>();
+            adminData.put("id", admin.getId());
+            adminData.put("name", admin.getName());
+            adminData.put("email", admin.getEmail());
+            adminData.put("phone", admin.getPhone() != null ? admin.getPhone() : "");
+            adminData.put("profilePic", admin.getProfilePic() != null ? admin.getProfilePic() : "/assets/images/rpk.jpg");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", adminData);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.err.println("❌ Error fetching admin settings: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Update Admin Settings
+     */
+    @PutMapping("/api/admin-settings")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> updateAdminSettings(
+            HttpSession session,
+            @RequestBody Map<String, Object> request) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            System.out.println("🔄 Updating admin settings...");
+            
+            User admin = userDAO.getFirstAdminUser();
+            if (admin == null) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "Admin user not found");
+                return ResponseEntity.ok(response);
+            }
+
+            String name = (String) request.get("name");
+            String email = (String) request.get("email");
+            String phone = (String) request.get("phone");
+            String password = (String) request.get("password");
+
+            if (name == null || name.trim().isEmpty()) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "Name cannot be empty");
+                return ResponseEntity.ok(response);
+            }
+
+            boolean updated = userDAO.updateAdminSettings(admin.getId(), name, email, phone, password);
+            
+            if (updated) {
+                System.out.println("✅ Admin settings updated successfully");
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("message", "Settings updated successfully");
+                return ResponseEntity.ok(response);
+            } else {
+                System.err.println("❌ Failed to update admin settings");
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "Failed to update settings");
+                return ResponseEntity.ok(response);
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error updating admin settings: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Serve Admin Files (images, pdfs, etc)
+     * Same pattern as StudentController.serveFile() for consistency
+     * Allows access to files stored in /assets/uploads/ directory
+     */
+    @GetMapping("/file/**")
+    public ResponseEntity<byte[]> serveAdminFile(jakarta.servlet.http.HttpServletRequest request) throws IOException {
+        String pathInfo = request.getRequestURI();
+        // Extract filename after /admin/file/
+        String filename = pathInfo.substring(pathInfo.lastIndexOf("/") + 1);
+        
+        try {
+            if (filename == null || filename.isEmpty() || filename.contains("..")) {
+                System.out.println("🚫 Invalid filename: " + filename);
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            }
+
+            System.out.println("🖼️ Serving admin file: " + filename);
+            
+            Path uploadRoot = resolveUploadRoot();
+            Path filePath = uploadRoot.resolve(filename).normalize();
+            
+            // Security check: ensure the resolved path is still within the upload directory
+            if (!filePath.startsWith(uploadRoot)) {
+                System.out.println("🚫 Path traversal attempt detected: " + filePath);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            
+            if (!Files.exists(filePath)) {
+                System.out.println("❌ File not found: " + filePath.toAbsolutePath());
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            }
+
+            byte[] fileContent = Files.readAllBytes(filePath);
+            String contentType = "application/octet-stream";
+            
+            // Determine content type based on file extension
+            if (filename.endsWith(".png")) {
+                contentType = "image/png";
+            } else if (filename.endsWith(".jpg") || filename.endsWith(".jpeg")) {
+                contentType = "image/jpeg";
+            } else if (filename.endsWith(".pdf")) {
+                contentType = "application/pdf";
+            } else if (filename.endsWith(".gif")) {
+                contentType = "image/gif";
+            } else if (filename.endsWith(".webp")) {
+                contentType = "image/webp";
+            } else if (filename.endsWith(".doc") || filename.endsWith(".docx")) {
+                contentType = "application/msword";
+            }
+            
+            System.out.println("✅ Serving file: " + filename + " (" + fileContent.length + " bytes) as " + contentType);
+            
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .body(fileContent);
+        } catch (Exception e) {
+            System.err.println("❌ [ADMIN_FILE_SERVE] Error: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * Upload Admin Profile Picture
+     * Similar to UserController's profile picture upload
+     */
+    @PostMapping("/api/admin-settings/upload-photo")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> uploadAdminProfilePicture(
+            HttpSession session,
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            jakarta.servlet.http.HttpServletRequest request) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            if (file == null || file.isEmpty()) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "No file selected");
+                return ResponseEntity.ok(response);
+            }
+
+            System.out.println("📸 Uploading admin profile picture...");
+            
+            // Get first admin user
+            User admin = userDAO.getFirstAdminUser();
+            if (admin == null) {
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "Admin user not found");
+                return ResponseEntity.ok(response);
+            }
+
+            // Save file to uploads directory
+            Path uploadRoot = resolveUploadRoot();
+            String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "profile.jpg";
+            String safeName = originalName.replaceAll("[^a-zA-Z0-9._-]", "_");
+            String fileName = "profile_" + admin.getId() + "_" + System.currentTimeMillis() + "_" + safeName;
+            Path target = uploadRoot.resolve(fileName);
+
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+            String profilePicPath = "/assets/uploads/" + fileName;
+            
+            System.out.println("✅ File saved: " + target.toAbsolutePath());
+            System.out.println("✅ File exists: " + Files.exists(target) + " Size: " + Files.size(target) + " bytes");
+
+            // Update database with new profile picture path
+            boolean updated = userDAO.updateAdminProfilePic(admin.getId(), profilePicPath);
+            
+            if (updated) {
+                System.out.println("✅ Admin profile picture path saved to database");
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", true);
+                response.put("message", "Profile picture uploaded successfully");
+                Map<String, Object> data = new HashMap<>();
+                data.put("profilePic", profilePicPath);
+                data.put("url", request.getContextPath() + "/admin/file/" + fileName);
+                response.put("data", data);
+                return ResponseEntity.ok(response);
+            } else {
+                System.err.println("❌ Failed to update admin profile picture in database");
+                Map<String, Object> response = new HashMap<>();
+                response.put("success", false);
+                response.put("message", "Failed to save profile picture path to database");
+                return ResponseEntity.ok(response);
+            }
+        } catch (IOException e) {
+            System.err.println("❌ IO Error uploading admin profile picture: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "File upload failed: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        } catch (Exception e) {
+            System.err.println("❌ Error uploading admin profile picture: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Helper method to resolve the uploads directory
+     * Identical to StudentController.resolveUploadRoot() for consistency
+     */
+    private Path resolveUploadRoot() throws IOException {
+        List<Path> candidates = List.of(
+                Paths.get("D:/RGM/pathpilot/src/main/webapp/assets/uploads"),
+                Paths.get(System.getProperty("user.dir"), "src", "main", "webapp", "assets", "uploads").toAbsolutePath().normalize()
+        );
+
+        IOException last = null;
+        for (Path candidate : candidates) {
+            try {
+                Files.createDirectories(candidate);
+                if (Files.isDirectory(candidate) && Files.isWritable(candidate)) {
+                    System.out.println("✅ Using uploads directory: " + candidate.toAbsolutePath());
+                    return candidate;
+                }
+            } catch (IOException ex) {
+                last = ex;
+            }
+        }
+
+        if (last != null) {
+            throw last;
+        }
+        throw new IOException("No writable upload directory available at project assets/uploads");
+    }
 
     @GetMapping("/settings")
     public String settings(HttpSession session) {

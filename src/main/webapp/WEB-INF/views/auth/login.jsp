@@ -184,28 +184,45 @@
             })
             .then(res => res.text())
             .then(data => {
-                data = data ? data.trim() : "";
-                console.log("Login response:", data);
+                console.log("📡 Raw login response:", JSON.stringify(data));
+                console.log("📡 Response length:", data.length);
                 
-                if (data === "INVALID") {
+                // Trim whitespace and remove quotes
+                let response = (data || "").trim();
+                console.log("✅ Trimmed (before quote removal):", response);
+                
+                // Remove surrounding quotes if present
+                if (response.startsWith('"') && response.endsWith('"')) {
+                    response = response.slice(1, -1);
+                    console.log("✅ Removed quotes, now:", response);
+                }
+                
+                if (response === "INVALID") {
+                    console.log("❌ Invalid credentials");
                     sessionStorage.setItem("loginError", "true");
                     location.reload();
-                } else if (data === "ERROR") {
+                } else if (response === "ERROR") {
+                    console.log("❌ System error");
                     alert("System error. Please try again.");
                     btn.disabled = false;
                     spinner.style.display = 'none';
                     document.getElementById('btnText').innerText = 'VERIFY & LOGIN';
-                } else if (data.startsWith("/")) {
-                    // Successful login, redirect to role-based page
-                    window.location.href = '<%=request.getContextPath()%>' + data;
+                } else if (response.startsWith("/")) {
+                    // Successful login - redirect to role-based page
+                    console.log("✅ Login successful, redirecting to:", response);
+                    const redirectUrl = '<%=request.getContextPath()%>' + response;
+                    console.log("🔄 Final redirect URL:", redirectUrl);
+                    window.location.href = redirectUrl;
                 } else {
-                    console.error("Unexpected response:", data);
+                    console.error("⚠️ Unexpected response:", response);
+                    console.error("Response starts with:", response.charAt(0), " (code:", response.charCodeAt(0), ")");
                     btn.disabled = false;
                     spinner.style.display = 'none';
                     document.getElementById('btnText').innerText = 'VERIFY & LOGIN';
                 }
             })
-            .catch(() => {
+            .catch(error => {
+                console.error("❌ Fetch error:", error);
                 btn.disabled = false;
                 spinner.style.display = 'none';
                 document.getElementById('btnText').innerText = 'VERIFY & LOGIN';

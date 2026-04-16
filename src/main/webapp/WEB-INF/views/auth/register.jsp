@@ -241,21 +241,53 @@
             })
             .then(response => response.text())
             .then(text => {
-                if (text === "OTP_SENT") {
-                    showAlert("Welcome aboard! OTP sent to your email.", "success");
-                    setTimeout(() => window.location.href = '<%=request.getContextPath()%>/verify-register', 3000);
-                } else if (text === "SUCCESS") {
-                    showAlert("Verification email sent. Please login.", "success");
-                    setTimeout(() => window.location.href = '<%=request.getContextPath()%>/login', 3000);
+                console.log("📡 Raw register response:", JSON.stringify(text));
+                console.log("📡 Response length:", text.length);
+                
+                // Trim whitespace and remove quotes
+                let response = (text || "").trim();
+                console.log("✅ Trimmed (before quote removal):", response);
+                
+                // Remove surrounding quotes if present
+                if (response.startsWith('"') && response.endsWith('"')) {
+                    response = response.slice(1, -1);
+                    console.log("✅ Removed quotes, now:", response);
+                }
+                
+                if (response === "OTP_SENT") {
+                    console.log("✅ OTP sent successfully, redirecting to verify-register...");
+                    showAlert("Welcome! OTP sent to your email.", "success");
+                    setTimeout(() => {
+                        console.log("🔄 Redirecting to verify-register");
+                        window.location.href = '<%=request.getContextPath()%>/verify-register';
+                    }, 1500);
+                } else if (response === "SUCCESS") {
+                    console.log("✅ Registration successful, redirecting to login...");
+                    showAlert("Account created! Redirecting to login...", "success");
+                    setTimeout(() => {
+                        console.log("🔄 Redirecting to login");
+                        window.location.href = '<%=request.getContextPath()%>/login';
+                    }, 1500);
+                } else if (response.includes("already") || response.includes("exist")) {
+                    console.log("⚠️ Email already exists");
+                    showAlert("Email already registered. Please login.", "error");
+                    btn.disabled = false;
+                    spinner.style.display = 'none';
+                    btnText.innerText = 'CREATE ACCOUNT';
                 } else {
-                    throw new Error(text || "REGISTRATION FAILED");
+                    console.error("⚠️ Unexpected response:", response);
+                    showAlert(response || "Registration failed. Please try again.", "error");
+                    btn.disabled = false;
+                    spinner.style.display = 'none';
+                    btnText.innerText = 'CREATE ACCOUNT';
                 }
             })
             .catch(error => {
+                console.error("❌ Fetch error:", error);
                 btn.disabled = false;
                 spinner.style.display = 'none';
-                btnText.innerText = 'INITIALIZE ACCOUNT';
-                showAlert(error.message, "error");
+                btnText.innerText = 'CREATE ACCOUNT';
+                showAlert("Network error. Please try again.", "error");
             });
         });
 

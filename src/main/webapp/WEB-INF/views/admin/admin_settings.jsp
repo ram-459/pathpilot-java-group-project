@@ -110,11 +110,15 @@
                             <div class="grid md:grid-cols-2 gap-6">
                                 <div>
                                     <label class="text-[10px] font-black uppercase text-gray-400 tracking-widest block mb-2 ml-1">Full Name</label>
-                                    <input type="text" id="adminName" class="input-field" value="Ram Parkash Kurmi">
+                                    <input type="text" id="adminName" class="input-field" placeholder="Administrator">
                                 </div>
                                 <div>
                                     <label class="text-[10px] font-black uppercase text-gray-400 tracking-widest block mb-2 ml-1">Email Address</label>
-                                    <input type="email" id="adminEmail" class="input-field" value="admin@pathpilot.com">
+                                    <input type="email" id="adminEmail" class="input-field" placeholder="admin@pathpilot.com">
+                                </div>
+                                <div>
+                                    <label class="text-[10px] font-black uppercase text-gray-400 tracking-widest block mb-2 ml-1">Phone Number</label>
+                                    <input type="tel" id="adminPhone" class="input-field" placeholder="+1 (555) 000-0000">
                                 </div>
                             </div>
 
@@ -212,15 +216,67 @@
 </div>
 
 <script>
+    let adminData = null;
+    let selectedImageFile = null;
+
+    // 📊 Load Admin Settings
+    function loadAdminSettings() {
+        console.log("🔍 Loading admin settings from database...");
+        
+        fetch('<%= request.getContextPath() %>/admin/api/admin-settings', {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => {
+            console.log("📡 API Response Status:", response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log("✅ Admin settings received:", data);
+            
+            if (data.success && data.data) {
+                adminData = data.data;
+                
+                // Construct image URL
+                let imgUrl = '<%= request.getContextPath() %>/assets/images/rpk.jpg';
+                if (adminData.profilePic && adminData.profilePic.trim() !== '') {
+                    // Extract filename from path
+                    const filename = adminData.profilePic.substring(adminData.profilePic.lastIndexOf('/') + 1);
+                    imgUrl = '<%= request.getContextPath() %>/admin/file/' + filename;
+                    console.log("🖼️ Profile image URL:", imgUrl);
+                }
+                
+                // Update form fields
+                document.getElementById('adminName').value = adminData.name || 'Administrator';
+                document.getElementById('adminEmail').value = adminData.email || 'admin@pathpilot.com';
+                document.getElementById('adminPhone').value = adminData.phone || '';
+                document.getElementById('profilePreview').src = imgUrl;
+                document.getElementById('stickyAvatar').src = imgUrl;
+                
+                console.log("🎨 Admin settings UI updated successfully");
+            } else {
+                console.error("❌ No data in response");
+                showToast('Failed to load admin settings');
+            }
+        })
+        .catch(error => {
+            console.error("❌ Error loading admin settings:", error);
+            showToast('Error loading admin settings');
+        });
+    }
+
     function previewImage(input){
         if (input.files && input.files[0]) {
+            selectedImageFile = input.files[0];
+            console.log("📸 Image selected for upload:", selectedImageFile.name);
+            
             let reader = new FileReader();
             reader.onload = e => {
                 document.getElementById("profilePreview").src = e.target.result;
                 document.getElementById("stickyAvatar").src = e.target.result;
+                console.log("👁️ Image preview updated");
             };
             reader.readAsDataURL(input.files[0]);
-            showToast('Avatar updated!');
         }
     }
 
@@ -237,13 +293,106 @@
     }
 
     function saveAllSettings() {
-        showToast("System-wide sync complete ✅");
+        console.log("💾 Saving admin settings...");
+        
+        const name = document.getElementById('adminName').value.trim();
+        const email = document.getElementById('adminEmail').value.trim();
+        const phone = document.getElementById('adminPhone').value.trim();
+        
+        if (!name) {
+            showToast('❌ Name cannot be empty');
+            return;
+        }
+
+        // Step 1: Upload image if selected
+        if (selectedImageFile) {
+            console.log("📸 Uploading profile picture...");
+            uploadProfilePicture();
+        } else {
+            // Step 2: Update settings only (no image change)
+            updateAdminSettingsOnly(name, email, phone);
+        }
+    }
+
+    function uploadProfilePicture() {
+        if (!selectedImageFile) {
+            console.log("ℹ️ No image to upload");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', selectedImageFile);
+
+        fetch('<%= request.getContextPath() %>/admin/api/admin-settings/upload-photo', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            console.log("📡 Upload Response Status:", response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log("✅ Upload response:", data);
+            if (data.success) {
+                console.log("✅ Profile picture uploaded successfully");
+                showToast('✅ Profile picture uploaded');
+                
+                // After image upload, update settings
+                const name = document.getElementById('adminName').value.trim();
+                const email = document.getElementById('adminEmail').value.trim();
+                const phone = document.getElementById('adminPhone').value.trim();
+                updateAdminSettingsOnly(name, email, phone);
+            } else {
+                showToast('❌ ' + (data.message || 'Image upload failed'));
+            }
+        })
+        .catch(error => {
+            console.error("❌ Error uploading profile picture:", error);
+            showToast('❌ Error uploading profile picture');
+        });
+    }
+
+    function updateAdminSettingsOnly(name, email, phone) {
+        console.log("💾 Updating admin settings (name, email, phone)...");
+        
+        const payload = {
+            name: name,
+            email: email,
+            phone: phone,
+            password: null  // Don't change password unless explicitly set
+        };
+
+        fetch('<%= request.getContextPath() %>/admin/api/admin-settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(response => {
+            console.log("📡 Save Response Status:", response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log("✅ Save response:", data);
+            if (data.success) {
+                showToast('✅ Admin settings saved successfully');
+                selectedImageFile = null;  // Reset file after successful save
+            } else {
+                showToast('❌ ' + (data.message || 'Failed to save settings'));
+            }
+        })
+        .catch(error => {
+            console.error("❌ Error saving admin settings:", error);
+            showToast('❌ Error saving settings');
+        });
     }
 
     // ✅ REDIRECTION LOGIC: Navigates to AdminController endpoints
     function openConfig(endpoint) {
         window.location.href = "<%=request.getContextPath()%>/admin/" + endpoint;
     }
+
+    // Load admin settings when page is ready
+    document.addEventListener('DOMContentLoaded', loadAdminSettings);
 </script>
 
 </body>

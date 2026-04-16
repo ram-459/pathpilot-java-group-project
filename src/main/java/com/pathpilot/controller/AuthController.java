@@ -54,7 +54,7 @@ public class AuthController {
     // ==========================================
     // 2. REGISTRATION PROCESS (AJAX)
     // ==========================================
-    @PostMapping("/register")
+    @PostMapping(value = "/register", produces = "text/plain")
     @ResponseBody
     public String processRegistration(
             @RequestParam("name") String name,
@@ -149,7 +149,7 @@ public class AuthController {
     // ==========================================
     // 3. LOGIN PROCESS (UNCHANGED)
     // ==========================================
-    @PostMapping("/login")
+    @PostMapping(value = "/login", produces = "text/plain")
     @ResponseBody
     public String processLogin(
             @RequestParam("email") String email,
