@@ -19,7 +19,10 @@ import java.io.File;
 import java.io.IOException;
 import org.springframework.web.multipart.MultipartFile;
 import com.pathpilot.dao.UserDAO;
+import com.pathpilot.dao.EnrollmentDAO;
 import com.pathpilot.model.User;
+import com.pathpilot.service.EmailService;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * AdminController handles UI navigation for secure management routes.
@@ -31,6 +34,15 @@ public class AdminController {
 
     @Autowired
     private UserDAO userDAO;
+
+    @Autowired
+    private EmailService emailService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private EnrollmentDAO enrollmentDAO;
 
     /**
      * Helper to verify admin session status.
@@ -214,6 +226,45 @@ public class AdminController {
     /**
      * Update user
      */
+    @GetMapping("/api/users/{userId}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getUserById(
+            @PathVariable int userId,
+            HttpSession session) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            User user = userDAO.getUserById(userId);
+            Map<String, Object> response = new HashMap<>();
+
+            if (user == null) {
+                response.put("success", false);
+                response.put("message", "User not found");
+                return ResponseEntity.ok(response);
+            }
+
+            Map<String, Object> safeUser = new HashMap<>();
+            safeUser.put("id", user.getId());
+            safeUser.put("name", user.getName());
+            safeUser.put("email", user.getEmail());
+            safeUser.put("phone", user.getPhone());
+            safeUser.put("role", user.getRole());
+            safeUser.put("verified", user.isVerified());
+
+            response.put("success", true);
+            response.put("data", safeUser);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
     @PutMapping("/api/users/{userId}")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateUser(
@@ -279,13 +330,57 @@ public class AdminController {
     }
 
     /**
+     * Get enrolled career path names for a specific user.
+     * Used by Admin Users modal (view details) for STUDENT/USER roles.
+     */
+    @GetMapping("/api/users/{userId}/careerpaths")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getUserCareerPaths(
+            @PathVariable int userId,
+            HttpSession session) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            List<Map<String, Object>> enrollments = enrollmentDAO.getAllEnrollmentDetailsForUser(userId);
+            java.util.LinkedHashSet<String> uniqueTitles = new java.util.LinkedHashSet<>();
+
+            for (Map<String, Object> enrollment : enrollments) {
+                Object titleObj = enrollment.get("path_title");
+                if (titleObj != null) {
+                    String title = String.valueOf(titleObj).trim();
+                    if (!title.isEmpty()) {
+                        uniqueTitles.add(title);
+                    }
+                }
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", new java.util.ArrayList<>(uniqueTitles));
+            response.put("count", uniqueTitles.size());
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            e.printStackTrace();
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
      * Get Admin Settings (for profile section)
      */
     @GetMapping("/api/admin-settings")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getAdminSettings(HttpSession session) {
         if (isNotAdmin(session)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("error", "Unauthorized");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
         }
 
         try {
@@ -613,5 +708,316 @@ public class AdminController {
         
         System.out.println("Platform content updated via AdminController.");
         return "redirect:/admin/settings?status=saved";
+    }
+
+    // ==========================================
+    // 5. CONTACT MESSAGES API
+    // ==========================================
+
+    /**
+     * Fetch all contact messages from database
+     * Returns JSON array with message details
+     */
+    @GetMapping("/api/contact-messages")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getContactMessages(HttpSession session) {
+        if (isNotAdmin(session)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(null);
+        }
+
+        try {
+            System.out.println("📬 Fetching contact messages from database...");
+            
+            List<Map<String, Object>> messages = userDAO.getContactMessages();
+            
+            System.out.println("✅ Found " + messages.size() + " contact messages");
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("data", messages);
+            response.put("count", messages.size());
+            
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.err.println("❌ Error fetching contact messages: " + e.getMessage());
+            e.printStackTrace();
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("error", e.getMessage());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Send reply to contact message - Form-based endpoint (like contact form)
+     * Receives: messageId, replyMessage as form data (not JSON)
+     */
+    @PostMapping("/api/reply")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> replyToContactMessage(
+            @RequestParam("messageId") Integer messageId,
+            @RequestParam("replyMessage") String replyMessage,
+            HttpSession session) {
+        
+        Map<String, Object> response = new HashMap<>();
+        
+        try {
+            // ========== AUTHORIZATION CHECK ==========
+            if (isNotAdmin(session)) {
+                response.put("success", false);
+                response.put("error", "Unauthorized access");
+                System.err.println("❌ Unauthorized reply attempt - not admin");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+            }
+            
+            String adminName = (String) session.getAttribute("userName");
+            if (adminName == null) adminName = "Support Team";
+            
+            System.out.println("\n========== ADMIN REPLY PROCESS ==========");
+            System.out.println("✅ Message ID: " + messageId);
+            System.out.println("✅ Admin: " + adminName);
+            System.out.println("✅ Reply length: " + (replyMessage != null ? replyMessage.length() : 0));
+            
+            // ========== VALIDATE INPUT ==========
+            if (replyMessage == null || replyMessage.trim().isEmpty()) {
+                response.put("success", false);
+                response.put("error", "Reply message cannot be empty");
+                System.err.println("❌ Empty reply text");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+            }
+            
+            // ========== FETCH MESSAGE FROM DATABASE ==========
+            String querySql = "SELECT id, sender_name, sender_email, subject, message FROM contact_messages WHERE id = ?";
+            java.util.List<Map<String, Object>> msgList = jdbcTemplate.queryForList(querySql, messageId);
+            
+            if (msgList.isEmpty()) {
+                response.put("success", false);
+                response.put("error", "Message not found");
+                System.err.println("❌ Message not found with ID: " + messageId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+            
+            Map<String, Object> msgData = msgList.get(0);
+            String studentEmail = (String) msgData.get("sender_email");
+            String originalSubject = (String) msgData.get("subject");
+            
+            if (studentEmail == null || studentEmail.trim().isEmpty()) {
+                response.put("success", false);
+                response.put("error", "Cannot find student email");
+                System.err.println("❌ Student email is null or empty");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+            }
+            
+            System.out.println("✅ Student Email: " + studentEmail);
+            System.out.println("✅ Subject: " + originalSubject);
+            
+            // ========== PREPARE EMAIL BODY (like contact form pattern) ==========
+            String htmlBody = "<div style='font-family: Segoe UI, Tahoma, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eef2f6; padding: 40px; border-radius: 20px; color: #1e293b;'>" +
+                    "  <h2 style='color: #4913ec; margin-top: 0;'>Response to Your Message</h2>" +
+                    "  <div style='background-color: #f8fafc; padding: 20px; border-radius: 12px; margin: 20px 0;'>" +
+                    "    <p><strong>Subject:</strong> " + originalSubject.replace("<", "&lt;").replace(">", "&gt;") + "</p>" +
+                    "    <p><strong>From:</strong> PathPilot Support Team</p>" +
+                    "  </div>" +
+                    "  <div style='background-color: #f1f5f9; padding: 20px; border-radius: 12px; border-left: 4px solid #4913ec;'>" +
+                    "    <h3 style='margin-top: 0; color: #0f172a;'>Our Response:</h3>" +
+                    "    <p style='line-height: 1.6; color: #475569;'>" + replyMessage.replace("\n", "<br>").replace("<", "&lt;").replace(">", "&gt;") + "</p>" +
+                    "  </div>" +
+                    "  <p style='font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center;'>&copy; 2026 PathPilot Support Team.</p>" +
+                    "</div>";
+            
+            // ========== SEND EMAIL (Best-Effort Pattern) ==========
+            try {
+                emailService.sendEmailWithAttachment(
+                        studentEmail,
+                        "Re: " + originalSubject,
+                        htmlBody,
+                        null);
+                System.out.println("✅ Email sent successfully to: " + studentEmail);
+            } catch (Exception emailErr) {
+                System.err.println("⚠️  Email sending failed (continuing): " + emailErr.getMessage());
+                emailErr.printStackTrace();
+                // Don't fail - email is optional, DB update is what matters
+            }
+            
+            // ========== UPDATE DATABASE ==========
+            String adminId = String.valueOf(session.getAttribute("userId"));
+            String updateSql = "UPDATE contact_messages SET status = 'REPLIED', reply_message = ?, reply_date = NOW(), replied_by = ?, replied_by_id = ? WHERE id = ?";
+            int rowsUpdated = jdbcTemplate.update(updateSql, replyMessage, adminName, adminId, messageId);
+            
+            if (rowsUpdated > 0) {
+                System.out.println("✅ Database updated: Message marked as REPLIED");
+                System.out.println("========== REPLY SUCCESSFUL ==========\n");
+                
+                response.put("success", true);
+                response.put("message", "Reply sent successfully");
+                return ResponseEntity.ok(response);
+            } else {
+                System.err.println("❌ No rows updated in database");
+                response.put("success", false);
+                response.put("error", "Failed to update message");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+            
+        } catch (Exception e) {
+            System.err.println("❌ EXCEPTION: " + e.getClass().getSimpleName());
+            System.err.println("❌ Message: " + e.getMessage());
+            e.printStackTrace();
+            
+            response.put("success", false);
+            response.put("error", e.getMessage());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> sendMessageReply(
+            @PathVariable Integer messageId,
+            @RequestBody Map<String, String> payload,
+            HttpSession session) {
+        
+        Map<String, Object> response = new HashMap<>();
+        
+        try {
+            // ========== AUTHORIZATION CHECK ==========
+            if (isNotAdmin(session)) {
+                response.put("success", false);
+                response.put("error", "Unauthorized");
+                System.err.println("❌ Unauthorized reply attempt");
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+            }
+            
+            String replyText = payload.get("replyMessage");
+            String adminName = (String) session.getAttribute("userName");
+            if (adminName == null) adminName = "Support Team";
+            
+            System.out.println("\n========== ADMIN REPLY PROCESS ==========");
+            System.out.println("Message ID: " + messageId);
+            System.out.println("Admin: " + adminName);
+            System.out.println("Reply Length: " + (replyText != null ? replyText.length() : 0));
+            
+            // ========== VALIDATE INPUT ==========
+            if (replyText == null || replyText.trim().isEmpty()) {
+                response.put("success", false);
+                response.put("error", "Reply message cannot be empty");
+                System.err.println("❌ Empty reply text");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+            }
+            
+            // ========== FETCH MESSAGE FROM DATABASE ==========
+            String querySql = "SELECT id, sender_name, sender_email, subject, message FROM contact_messages WHERE id = ?";
+            java.util.List<Map<String, Object>> msgList = jdbcTemplate.queryForList(querySql, messageId);
+            
+            if (msgList.isEmpty()) {
+                response.put("success", false);
+                response.put("error", "Message not found with ID: " + messageId);
+                System.err.println("❌ Message not found with ID: " + messageId);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+            }
+            
+            Map<String, Object> msgData = msgList.get(0);
+            String studentEmail = (String) msgData.get("sender_email");
+            String originalSubject = (String) msgData.get("subject");
+            
+            if (studentEmail == null || studentEmail.trim().isEmpty()) {
+                response.put("success", false);
+                response.put("error", "Student email is invalid");
+                System.err.println("❌ Student email is null or empty");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
+            }
+            
+            System.out.println("✅ Message found for ID: " + messageId);
+            System.out.println("✅ Student Email: " + studentEmail);
+            System.out.println("✅ Original Subject: " + originalSubject);
+            
+            // ========== PREPARE EMAIL BODY (like contact form pattern) ==========
+            String htmlBody = "<div style='font-family: Segoe UI, Tahoma, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eef2f6; padding: 40px; border-radius: 20px; color: #1e293b;'>" +
+                    "  <h2 style='color: #4913ec; margin-top: 0;'>Response to Your Message</h2>" +
+                    "  <div style='background-color: #f8fafc; padding: 20px; border-radius: 12px; margin: 20px 0;'>" +
+                    "    <p><strong>Subject:</strong> " + originalSubject.replaceAll("<", "&lt;").replaceAll(">", "&gt;") + "</p>" +
+                    "    <p><strong>From:</strong> PathPilot Support Team</p>" +
+                    "  </div>" +
+                    "  <div style='background-color: #f1f5f9; padding: 20px; border-radius: 12px; border-left: 4px solid #4913ec;'>" +
+                    "    <h3 style='margin-top: 0; color: #0f172a;'>Our Response:</h3>" +
+                    "    <p style='line-height: 1.6; color: #475569;'>" + replyText.replace("\n", "<br>").replaceAll("<", "&lt;").replaceAll(">", "&gt;") + "</p>" +
+                    "  </div>" +
+                    "  <p style='font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 20px; text-align: center;'>&copy; 2026 PathPilot Support Team.</p>" +
+                    "</div>";
+            
+            // ========== SEND EMAIL (Best-Effort Pattern - doesn't block on failure) ==========
+            try {
+                emailService.sendEmailWithAttachment(
+                        studentEmail,
+                        "Re: " + originalSubject,
+                        htmlBody,
+                        null);
+                System.out.println("✅ Email sent successfully to: " + studentEmail);
+            } catch (Exception emailErr) {
+                System.err.println("⚠️  Email sending failed (continuing anyway): " + emailErr.getMessage());
+                emailErr.printStackTrace();
+                // Don't fail - just log and continue
+            }
+            
+            // ========== UPDATE DATABASE ==========
+            String updateSql = "UPDATE contact_messages SET status = 'REPLIED', reply_message = ?, reply_date = NOW(), replied_by = ? WHERE id = ?";
+            int rowsUpdated = jdbcTemplate.update(updateSql, replyText, adminName, messageId);
+            
+            if (rowsUpdated > 0) {
+                System.out.println("✅ Database updated: Message marked as REPLIED");
+                System.out.println("========== REPLY SUCCESSFUL ==========\n");
+                
+                response.put("success", true);
+                response.put("message", "Reply sent successfully");
+                return ResponseEntity.ok(response);
+            } else {
+                System.err.println("❌ No rows updated in database");
+                response.put("success", false);
+                response.put("error", "Failed to update message in database");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+            }
+            
+        } catch (Exception e) {
+            System.err.println("❌ EXCEPTION in sendMessageReply: " + e.getClass().getSimpleName());
+            System.err.println("❌ Error message: " + e.getMessage());
+            e.printStackTrace();
+            
+            response.put("success", false);
+            response.put("error", "Server error: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * Update message status to UNREAD when viewing
+     */
+    @PutMapping("/api/messages/{messageId}/view")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> markMessageAsViewed(
+            @PathVariable Integer messageId,
+            HttpSession session) {
+        
+        if (isNotAdmin(session)) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("error", "Unauthorized");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        }
+
+        try {
+            String sql = "UPDATE contact_messages SET status = 'UNREAD', updated_at = NOW() WHERE id = ?";
+            jdbcTemplate.update(sql, messageId);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            System.err.println("❌ Error updating message status: " + e.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
     }
 }
